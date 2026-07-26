@@ -20,4 +20,12 @@ class PipelineApplicationTests {
 		assertEquals(30, sum);
 	}
 
+	@Test
+	public void MathSubtractTest() {
+		double num1 = 30;
+		double num2 = 5;
+		double subtraction = Math.subtract(num1, num2);
+		assertEquals(25, subtraction);
+	}
+
 }

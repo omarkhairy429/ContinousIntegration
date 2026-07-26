@@ -2,51 +2,87 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches:
-      - master
+    branches: [ "master" ]
   pull_request:
-    branches:
-      - master
+    branches: [ "master" ]
 
-
-
-
-
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  JAVA_VERSION: '21'
 
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setting up JDK
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
-          java-version: 21
-          distribution: 'temurin'
-          cache: 'maven'
-      - name: Validation Maven
-        run: mvn -B -DskipTests=true validate
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+      - run: mvn -B -DskipTests=true validate
 
   build_test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setting up JDK
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
-            java-version: 21
-            distribution: 'temurin'
-            cache: 'maven'
-      - name: Testing the application
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+      - name: Build & test
         run: mvn -B test package
-      - name: Uploading JAR Artifact
+      - name: Upload JAR
         uses: actions/upload-artifact@v4
         with:
-            name: app-jar
-            path: target/*.jar
-      - name: Uploading Test Reports
+          name: app-jar
+          path: target/*.jar
+      - name: Upload surefire reports
         uses: actions/upload-artifact@v4
         with:
-            name: surefire-reports
-            path: target/surefire-reports/**
+          name: surefire-reports
+          path: target/surefire-reports/**
 
+  dockerfile_lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hadolint check
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: error
+
+  docker_publish_staging:
+    needs: [build_test, dockerfile_lint]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download JAR
+        uses: actions/download-artifact@v4
+        with:
+          name: app-jar
+          path: target/
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Get short SHA
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.vars.outputs.sha_short }}
